@@ -1,0 +1,14 @@
+node_modules/
+
+config*yaml
+config*yml
+
+.env
+
+*.log
+
+test-client
+
+coverage/
+
+
