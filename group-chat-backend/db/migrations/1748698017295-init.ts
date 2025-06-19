@@ -21,8 +21,9 @@ export class Init1748698017295 implements MigrationInterface {
                         isNullable: false,
                     },
                     {
-                        name: 'user_avatar',
+                        name: 'password',
                         type: 'varchar',
+                        length: '5000',
                         isNullable: false,
                     },
                     {
