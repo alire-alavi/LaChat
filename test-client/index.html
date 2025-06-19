@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>JWT Chat Client</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <!-- <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script> -->
+        <script src="./node_modules/socket.io/client-dist/socket.io.min.js"></script>
+    </head>
+
+    <body class="bg-gray-100 min-h-screen flex items-center justify-center px-4">
+        <div class="w-full max-w-xl bg-white rounded-xl shadow p-6">
+            <h2 class="text-2xl font-semibold mb-4 text-center">💬 NestJS WebSocket Chat</h2>
+
+            <!-- Auth Section -->
+            <div id="auth-section" class="space-y-4">
+                <input
+                    id="username"
+                    type="text"
+                    placeholder="Enter a username"
+                    class="w-full border px-4 py-2 rounded-lg"
+                />
+                <input
+                    id="password"
+                    type="password"
+                    placeholder="Enter a password"
+                    class="w-full border px-4 py-2 rounded-lg"
+                />
+                <button
+                    onclick="register()"
+                    class="w-full bg-blue-600 text-white font-semibold py-2 rounded-lg hover:bg-blue-700"
+                >
+                    Register & Connect
+                </button>
+            </div>
+
+            <!-- Chat UI Section -->
+            <div id="chat-section" class="hidden flex flex-col gap-4">
+                <div class="flex justify-between items-center text-sm text-gray-600">
+                    <span id="user-info"></span>
+                    <button onclick="logout()" class="text-red-600 hover:underline font-semibold">
+                        Logout
+                    </button>
+                </div>
+
+                <div
+                    id="chat-box"
+                    class="border rounded-lg h-64 p-3 overflow-y-auto bg-gray-50 text-sm flex flex-col gap-2"
+                ></div>
+
+                <div class="flex gap-2">
+                    <input
+                        id="message"
+                        type="text"
+                        placeholder="Type your message..."
+                        class="flex-1 border px-4 py-2 rounded-lg"
+                        onkeydown="if(event.key==='Enter') sendMessage()"
+                    />
+                    <button
+                        onclick="sendMessage()"
+                        class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700"
+                    >
+                        Send
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            const API_URL = 'http://localhost:8001'; // adjust as needed
+            let socket = null;
+            let jwtToken = localStorage.getItem('jwt');
+            let currentUser = null;
+
+            window.addEventListener('load', async () => {
+                if (jwtToken) {
+                    document.getElementById('auth-section').classList.add('hidden');
+                    document.getElementById('chat-section').classList.remove('hidden');
+                    await fetchUser();
+                    connectSocket();
+                }
+            });
+
+            async function register() {
+                const username = document.getElementById('username').value.trim();
+                const password = document.getElementById('password').value.trim();
+                if (!username) return alert('Enter a username');
+                if (!password) return alert('Enter a passowrd');
+
+                try {
+                    const res = await fetch(`${API_URL}/auth/me`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ user_name: username, pass: password}),
+                    });
+
+                    const data = await res.json();
+                    console.log('Registration response:', data);
+                    jwtToken = data.token;
+                    localStorage.setItem('jwt', jwtToken);
+
+                    document.getElementById('auth-section').classList.add('hidden');
+                    document.getElementById('chat-section').classList.remove('hidden');
+                    await fetchUser();
+                    connectSocket();
+                } catch (err) {
+                    alert('Registration failed');
+                    console.error(err);
+                }
+            }
+
+            async function fetchUser() {
+                try {
+                    const res = await fetch(`${API_URL}/auth/me`, {
+                        headers: { Authorization: `Bearer ${jwtToken}` },
+                    });
+                    currentUser = await res.json();
+                    document.getElementById(
+                        'user-info',
+                    ).textContent = `👤 Logged in as: ${currentUser.user_name}`;
+                } catch (e) {
+                    console.warn('Token invalid. Logging out...');
+                    logout();
+                }
+            }
+
+            function connectSocket() {
+                if (!jwtToken) return;
+
+                socket = io(API_URL, {
+                    path: '/ws',
+                    query: { jwt: jwtToken },
+                    transports: ['websocket'],
+                    reconnection: true,
+                    reconnectionAttempts: 5,
+                    reconnectionDelay: 1000,
+                });
+
+                socket.on('connect', () => {
+                    appendSystemMessage('✅ Connected to chat server');
+
+                    socket.emit('CHAT_JOIN', { key: 'join-ui' });
+                });
+
+                socket.on('CHAT_MESSAGE', (msg) => {
+                    appendChatMessage(msg);
+                });
+
+                socket.on('CHAT_JOIN_RESULT', (response) => {
+                    console.log('[JOIN RESULT]', response); // ✅ Logs the full response
+                    if (response?.status_code === 200) {
+                        appendSystemMessage(`👥 Joined chat as ${currentUser.user_name}`);
+                        const messages = response.result?.messages || [];
+                        messages.forEach((msg) => appendChatMessage(msg));
+                        appendSystemMessage(`📦 Loaded ${messages.length} previous messages`);
+                    } else {
+                        appendSystemMessage('⚠️ Failed to join chat');
+                    }
+                });
+
+                socket.on('CHAT_SEND_MESSAGE_RESULT', (response) => {
+                    console.log('[SEND MESSAGE RESULT]', response); // ✅ Logs the full response
+                    if (response?.status_code === 200) {
+                        appendSystemMessage('✅ Message sent successfully');
+                    } else {
+                        appendSystemMessage(
+                            `⚠️ Failed to send message: ${
+                                response.error?.details || 'Unknown error'
+                            }`,
+                        );
+                    }
+                });
+
+                socket.on('CHAT_STATUS', (status) => {
+                    appendSystemMessage(
+                        `📈 ${status.users} users online. Last message: ${formatTime(
+                            status.last_message,
+                        )}`,
+                    );
+                });
+
+                socket.on('disconnect', () => {
+                    appendSystemMessage('❌ Disconnected from chat');
+                });
+
+                socket.on('connect_error', (err) => {
+                    appendSystemMessage('⚠️ Connection error: ' + err.message);
+                });
+            }
+
+            function sendMessage() {
+                const input = document.getElementById('message');
+                const message = input.value.trim();
+                if (!message || !socket?.connected) return;
+
+                socket.emit(
+                    'CHAT_SEND_MESSAGE',
+                    {
+                        key: 'chat-ui',
+                        message,
+                        reply_to: null,
+                    },
+                    (response) => {
+                        console.log('[SEND RESPONSE]', response); // ✅ Logs the full response
+
+                        if (response?.status_code !== 200) {
+                            appendSystemMessage(
+                                `⚠️ Failed to send message: ${
+                                    response.error?.details || 'Unknown error'
+                                }`,
+                            );
+                        }
+                    },
+                );
+
+                input.value = '';
+            }
+
+            function appendChatMessage(msg) {
+                const isSelf = msg.user?.user_id === currentUser?.user_id;
+                const box = document.getElementById('chat-box');
+
+                const container = document.createElement('div');
+                container.className = `flex items-end ${isSelf ? 'justify-end' : 'justify-start'}`;
+
+                const bubble = document.createElement('div');
+                bubble.className = `max-w-xs px-4 py-2 rounded-lg shadow ${
+                    isSelf
+                        ? 'bg-green-200 text-right rounded-br-none'
+                        : 'bg-white text-left rounded-bl-none'
+                }`;
+
+                <!--const avatar = document.createElement('img');
+                // avatar.src = msg.user?.user_avatar || 'https://placekitten.com/40/40';
+                avatar.src = "http://chat.pic-nic.ir/avatar.png"
+                avatar.alt = 'avatar';
+                avatar.className = 'w-8 h-8 rounded-full mr-2';-->
+
+                const content = `
+          <div class="text-xs text-gray-600 font-semibold">${
+              msg.user?.user_name || 'Anonymous'
+          }</div>
+          <div class="text-sm text-gray-800">${msg.message}</div>
+          <div class="text-[10px] text-gray-400 mt-1">${formatTime(msg.date)}</div>
+        `;
+                bubble.innerHTML = content;
+
+                if (isSelf) {
+                    container.appendChild(bubble);
+                } else {
+                    const flex = document.createElement('div');
+                    flex.className = 'flex items-start gap-2';
+                    flex.appendChild(avatar);
+                    flex.appendChild(bubble);
+                    container.appendChild(flex);
+                }
+
+                box.appendChild(container);
+                box.scrollTop = box.scrollHeight;
+            }
+
+            function appendSystemMessage(text) {
+                const box = document.getElementById('chat-box');
+                const div = document.createElement('div');
+                div.textContent = text;
+                div.className = 'text-center text-xs text-gray-500 italic';
+                box.appendChild(div);
+                box.scrollTop = box.scrollHeight;
+            }
+
+            function formatTime(iso) {
+                if (!iso) return '';
+                const date = new Date(iso);
+                return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            }
+
+            function logout() {
+                localStorage.removeItem('jwt');
+                jwtToken = null;
+                socket?.disconnect();
+                socket = null;
+                currentUser = null;
+                document.getElementById('chat-box').innerHTML = '';
+                document.getElementById('message').value = '';
+                document.getElementById('chat-section').classList.add('hidden');
+                document.getElementById('auth-section').classList.remove('hidden');
+                document.getElementById('user-info').textContent = '';
+            }
+        </script>
+    </body>
+</html>
