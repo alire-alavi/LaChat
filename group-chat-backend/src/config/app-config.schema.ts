@@ -5,11 +5,14 @@ export class AppConfig {
     JWT_SECRET_KEY!: string;
 
     @IsString()
+    @IsOptional()
+    JWT_LIFETIME: string = '1d';
+
+    @IsString()
     SECRET_PASSPHRASE!: string;
 
     @IsString()
-    @IsOptional()
-    JWT_LIFETIME: string = '1d';
+    APP_SECRET_KEY!: string;
 
     @IsString()
     @IsOptional()

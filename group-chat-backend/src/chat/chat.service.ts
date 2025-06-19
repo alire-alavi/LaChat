@@ -177,7 +177,6 @@ export class ChatService {
                 ? {
                       user_id: msg.user.id,
                       user_name: msg.user.user_name,
-                      user_avatar: msg.user.user_avatar,
                   }
                 : undefined,
             message: msg.message,

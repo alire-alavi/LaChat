@@ -18,6 +18,11 @@ export class UserResponseDto {
     created!: string;
 }
 
+export class LoginUserRequestDto {
+    user_name!: string;
+    passphrase!: string;
+}
+
 export class RegisterUserRequestDto {
     @ApiProperty({ example: 'alireza', description: 'Username' })
     @IsString()
@@ -27,6 +32,16 @@ export class RegisterUserRequestDto {
     })
     user_name!: string;
     passphrase!: string;
+}
+
+export class GrantTokenResponseDto {
+    token!: string;
+    user!: UserResponseDto;
+}
+
+export class LoginResponseDto {
+    token!: string;
+    user!: UserResponseDto;
 }
 
 export class RegisterResponseDto {
