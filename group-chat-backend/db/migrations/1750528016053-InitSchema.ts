@@ -13,7 +13,7 @@ export class InitSchema1750528016053 implements MigrationInterface {
 
         await queryRunner.query(`
       CREATE TABLE "conversation" (
-        "id" UUID NOT NULL DEFAULT uuid_generate_v4(),
+        "id" UUID NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
         "name" VARCHAR
       )
     `);
