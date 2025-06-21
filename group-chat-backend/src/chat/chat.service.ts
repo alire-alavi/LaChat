@@ -1,7 +1,7 @@
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, MoreThan } from 'typeorm';
-import { Message } from './chat.entity';
+import { Conversation, Message, Participant } from './chat.entity';
 import { User } from '../auth/user.entity';
 import { UsersService } from '../auth/users.service';
 import { ConfigService } from '@nestjs/config';
@@ -26,6 +26,8 @@ export class ChatService {
         private readonly messageRepo: Repository<Message>,
         @InjectRepository(User)
         private readonly userRepo: Repository<User>,
+        private readonly participantRepo:Repository<Participant>,
+        private readonly conversationRepo: Repository<Conversation>,
         private readonly usersService: UsersService,
         private readonly configService: ConfigService,
     ) {
@@ -68,18 +70,72 @@ export class ChatService {
         return last[0]?.date?.toISOString();
     }
 
+    async getUserParticipants(userId: string): Promise<Participant[] | undefined> {
+        const results = await this.participantRepo.find({
+            where: { user: { id: Number(userId) } },
+            relations: ['conversation'],
+        });
+        return results.map((participant: Participant) => ({
+            ...participant,
+            conversation: {
+                ...participant.conversation,
+                id: participant.conversation.id,
+                name: participant.conversation.name,
+            },
+        }));
+    }
+
+    async getConversationMessages(conversationId: string, pageSize: number = 20, page: number = 1): Promise<Message[]> {
+        const results = await this.messageRepo
+            .createQueryBuilder("message")
+            .leftJoinAndSelect("message.sender", "user")
+            .where("message.conversationId = :conversationId", { conversationId  })
+            .orderBy("message.sentAt", "DESC") // for reverse chronological
+            .skip((page - 1) * pageSize)
+            .take(pageSize)
+            .select([
+              "message.id",
+              "message.content",
+              "message.sentAt",
+              "user.id",
+              "user.username"
+            ])
+            .getMany();
+        return results;
+    }
+
     /**
      * Store a user message and update lastUserMessageDate.
      */
     async createUserMessage(
         userId: number,
+        conversationId: string,
         message: string,
         replyTo?: number,
     ): Promise<ChatMessageResult> {
-        const user = await this.userRepo.findOne({ where: { id: userId } });
-        if (!user) {
-            throw new Error('User not found');
+        const result = await this.userRepo
+            .createQueryBuilder('user')
+            .leftJoinAndSelect('user.participants', 'participant')
+            .leftJoinAndSelect('participant.conversation', 'conversation')
+            .where('user.id = :userId', { userId })
+            .andWhere('conversation.id = :conversationId', { conversationId })
+            .getOne();
+
+        if (!result || !result.participants.some((p) => p.conversation.id === conversationId)) {
+            throw new Error('User or conversation not found, or user is not a participant');
         }
+
+        const user = result;
+        const conv = result.participants.some((p) => p.conversation);
+
+        const participant = await this.participantRepo.findOne({
+            where: { user: { id: userId }, conversation: { id: conversationId } },
+        });
+
+        if (!participant) {
+            throw new Error('User is not a participant in the conversation');
+        }
+
         let replyMsg: Message | undefined = undefined;
         if (replyTo) {
             const msgRepoResponse = await this.messageRepo.findOne({ where: { id: replyTo } });
@@ -89,9 +145,10 @@ export class ChatService {
                 throw new Error('Reply message does not exist');
             }
         }
+
         const msg = this.messageRepo.create({
-            user,
-            message,
+            user: user,
+            message: message,
             date: new Date(),
             reply_to: replyMsg,
         });
