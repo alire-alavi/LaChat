@@ -26,7 +26,9 @@ export class ChatService {
         private readonly messageRepo: Repository<Message>,
         @InjectRepository(User)
         private readonly userRepo: Repository<User>,
+        @InjectRepository(Participant)
         private readonly participantRepo:Repository<Participant>,
+        @InjectRepository(Conversation)
         private readonly conversationRepo: Repository<Conversation>,
         private readonly usersService: UsersService,
         private readonly configService: ConfigService,
