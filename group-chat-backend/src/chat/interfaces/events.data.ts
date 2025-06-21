@@ -1,9 +1,11 @@
 interface ChatJoinDto {
     key: string;
+    conversationId: string;
 }
 
 interface ChatSendMessageDto {
     key: string;
+    conversationId: string;
     message: string;
     reply_to?: number;
 }
@@ -25,7 +27,7 @@ interface ChatJoinResponse {
     key: string;
     result: {
         last_message: string;
-        users: number;
+        participants?: number;
         messages: ChatMessageResult[];
     };
 }
