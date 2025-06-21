@@ -14,7 +14,7 @@ import { Injectable, Logger, UseGuards } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { WsAuthGuard } from 'src/auth/guards/ws-jwt-auth.guard';
 import { ChatService } from './chat.service';
-import { ChatJoinDto, ChatSendMessageDto } from './interfaces/events.data';
+import { ChatJoinDto, ChatMessageResult, ChatSendMessageDto } from './interfaces/events.data';
 import { ServerToClientEvents, ClientToServerEvents } from './interfaces/chat.events';
 import { AppConfig } from 'src/config/app-config.schema';
 
@@ -49,13 +49,14 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
 
     async handleConnection(socket: Socket) {
         try {
-            // TODO: strong type
             const jwt = socket.handshake.query?.jwt as string | undefined;
             if (jwt) {
                 const user = await this.authService.verifyAsync(jwt);
                 if (user) {
                     this.socketUserMap.set(socket.id, user.sub);
                     this.incrementOnlineUser(user.sub);
+                    const participants = await this.chatService.getUserParticipants(user.sub);
+                    socket.emit('CONVERSATIONS', participants);
                     this.logger.debug(
                         `User #${user.name} connected: sockets=${this.onlineUsers.get(user.sub)}`,
                     );
@@ -89,14 +90,13 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     /**
      * Client connects and requests initial chat history and status.
      */
-    @SubscribeMessage('CHAT_JOIN')
-    async handleChatJoin(
+    @SubscribeMessage('ONLINE')
+    async handlOnlineStatus(
         @MessageBody() data: ChatJoinDto,
         @ConnectedSocket() socket: Socket<ClientToServerEvents, ServerToClientEvents>,
     ): Promise<void> {
         const key = data.key;
         try {
-            // const userId = this.socketUserMap.get(socket.id) || undefined;
             const history = await this.chatService.getRecentMessages();
             const users = this.getOnlineUserCount();
             const lastMsgDate = history.length > 0 ? history[history.length - 1].date : '';
@@ -106,8 +106,48 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
                 key,
                 result: {
                     last_message: lastMsgDate,
-                    users,
+                    participants: users,
                     messages: history,
+                },
+            });
+        } catch (e) {
+            socket.emit(
+                'CHAT_JOIN_RESULT',
+                this.buildWsError('SERVER_ERROR', 'Could not fetch chat history', key, 500),
+            );
+        }
+    }
+
+    /**
+     * Client connects and requests initial chat history and status.
+     */
+    @SubscribeMessage('CHAT_JOIN')
+    async handleChatJoin(
+        @MessageBody() data: ChatJoinDto,
+        @ConnectedSocket() socket: Socket<ClientToServerEvents, ServerToClientEvents>,
+    ): Promise<void> {
+        const key = data.key;
+        const conversationId = data.conversationId;
+        try {
+            const userId = this.socketUserMap.get(socket.id) || undefined;
+            const history = await this.chatService.getConversationMessages(conversationId);
+            // const participants = await this.chatService.getConversationParticipants(conversationId);
+            const lastMsgDate = history.length > 0 ? history[history.length - 1].date : '';
+            const messages = history.map((item) => ({
+                id: item.id,
+                message: item.message,
+                reply_to: item.reply_to ? item.reply_to.id : undefined,
+                user: item.user,
+                date: item.date.toString(),
+            }))
+            socket.emit('CHAT_JOIN_RESULT', {
+                status_code: 200,
+                message: 'OK',
+                key,
+                result: {
+                    last_message: lastMsgDate.toString(),
+                    // participants,
+                    messages: messages,
                 },
             });
         } catch (e) {
@@ -125,13 +165,12 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     @SubscribeMessage('CHAT_SEND_MESSAGE')
     async handleChatSendMessage(
         @MessageBody() data: ChatSendMessageDto,
-        // TODO: Generic Types can be passed to socket for events map
-        // TODO: Generic Events Listen and Events Emit
         @ConnectedSocket() socket: Socket<ClientToServerEvents, ServerToClientEvents>,
     ): Promise<void> {
         const key = data.key;
         const message = data.message?.trim();
         const replyTo = data.reply_to;
+        const conversationId = data.conversationId;
         const userId = this.socketUserMap.get(socket.id);
 
         if (!message || message.length < 1 || message.length > 2000) {
@@ -180,8 +219,8 @@ export class ChatGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
         }
 
         try {
-            const msg = await this.chatService.createUserMessage(userId!, message, replyTo);
-            this.server.emit('CHAT_MESSAGE', msg);
+            const msg = await this.chatService.createUserMessage(userId!, message, conversationId, replyTo);
+            this.server.to(conversationId).emit('CHAT_MESSAGE', msg);
             socket.emit('CHAT_SEND_MESSAGE_RESULT', {
                 status_code: 200,
                 message: 'OK',
