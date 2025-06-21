@@ -12,11 +12,11 @@ import { User } from 'src/auth/user.entity';
 @Entity()
 export class Conversation {
     @PrimaryGeneratedColumn('uuid')
-    id!: number;
+    id!: string;
 
     @Column({ nullable: true })
     name!: string;
-
+    
     @OneToMany(() => Participant, (participant) => participant.conversation, {
         cascade: true,
     })
